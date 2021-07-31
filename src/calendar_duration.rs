@@ -141,18 +141,24 @@ pub fn add_years<Tz: TimeZone>(dt: &DateTime<Tz>, years: i32) -> Option<DateTime
     dt.with_year(try_opt!(dt.year().checked_add(years)))
 }
 
-pub fn add_months_naive_date(date: &NaiveDate, months: i32) -> Option<NaiveDate> {
-    let next_month_0 = try_opt!((date.month0() as i64).checked_add(months as i64));
+pub fn naive_add_years(dt: &NaiveDateTime, years: i32) -> Option<NaiveDateTime> {
+    dt.with_year(try_opt!(dt.year().checked_add(years)))
+}
+
+pub fn add_months_naive_date(date: &NaiveDate, month_offset: i32) -> Option<NaiveDate> {
+    let next_month_0 = try_opt!((date.month0() as i64).checked_add(month_offset as i64));
     let additional_years = next_month_0 / 12;
-    let next_month_0 = (next_month_0 % 12) as u32;
+    let next_month_0 = (next_month_0 % 12) as i32;
+
     let additional_years = if additional_years >= (i32::max_value() as i64) {
         return None;
     } else {
         additional_years as i32
     };
+
     let next_year = try_opt!(date.year().checked_add(additional_years));
-    let next_day = min(date.day(), last_day_of_month_0(next_year, next_month_0));
-    NaiveDate::from_ymd_opt(next_year, next_month_0 + 1, next_day)
+    let next_day = min(date.day(), last_day_of_month_0(next_year, next_month_0.abs() as u32 % 12));
+    NaiveDate::from_ymd_opt(next_year, (next_month_0.abs() as u32 % 12) + 1, next_day)
 }
 
 pub fn add_months_naive_dt(dt: &NaiveDateTime, months: i32) -> Option<NaiveDateTime> {
@@ -164,6 +170,10 @@ pub fn add_months_dt<Tz: TimeZone>(dt: &DateTime<Tz>, months: i32) -> Option<Dat
                                                          DateTime::from_utc(naive,
                                                                             dt.offset().clone())
                                                      })
+}
+
+pub fn naive_add_months_dt(dt: &NaiveDateTime, months: i32) -> Option<NaiveDateTime> {
+    add_months_naive_dt(&dt, months)
 }
 
 /// Add the `CalendarDuration` to given dt, returning None on overflow.
@@ -184,9 +194,24 @@ pub fn checked_add<Tz: TimeZone>(dt: &DateTime<Tz>,
         .and_then(|dt| add_months_dt(&dt, duration.months))
 }
 
+
 /// As this crate does not define `DateTime`, it cannot implement `Add`. Hence this free function.
 pub fn add<Tz: TimeZone>(dt: &DateTime<Tz>, duration: &CalendarDuration) -> DateTime<Tz> {
     checked_add(dt, duration).expect("add(DateTime, CalendarDuration) overflowed")
+}
+
+pub fn naive_checked_add(dt: &NaiveDateTime,
+                                 duration: &CalendarDuration)
+                                 -> Option<NaiveDateTime> {
+    dt.clone()
+        .checked_add_signed(duration.duration)
+        .and_then(|dt| naive_add_years(&dt, duration.years))
+        .and_then(|dt| naive_add_months_dt(&dt, duration.months))
+}
+
+/// As this crate does not define `DateTime`, it cannot implement `Add`. Hence this free function.
+pub fn naive_add(dt: &NaiveDateTime, duration: &CalendarDuration) -> NaiveDateTime {
+    naive_checked_add(dt, duration).expect("add(DateTime, CalendarDuration) overflowed")
 }
 
 impl From<OldDuration> for CalendarDuration {
@@ -312,7 +337,9 @@ mod tests {
         assert_eq!(input, format!("{:?}", dt));
 
         let duration = CalendarDuration::months(2);
+
         let result = add(&dt, &duration);
+
         //Note how february doesn't have a 31st day...
         assert_eq!("1997-02-28T16:39:57.123Z", format!("{:?}", result));
 
